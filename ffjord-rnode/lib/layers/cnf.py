@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
 
+
 from torchdiffeq import odeint_adjoint as odeint
 from TorchDiffEqPack import odesolve_adjoint_sym12 as odesolve
+from TorchDiffEqPack import odesolve_adjoint as odesolve_aca
 from .wrappers.cnf_regularization import RegularizedODEfunc
 
 __all__ = ["CNF"]
@@ -63,13 +65,20 @@ class CNF(nn.Module):
         options.update({'safety': None})
         options.update({'t_eval': None})
         options.update({'interpolation_method': 'cubic'})
-        options.update({'regenerate_graph': False})
+        #options.update({'regenerate_graph': False})
         options.update({'print_time': False})
 
         if self.training:
             if self.solver in ['sym12async','adalf', 'fixedstep_sym12async','fixedstep_adalf']:
                 initial = (z, _logpz) + reg_states
                 out = odesolve(self.odefunc, initial, options=options)
+                state_t = []
+                for _out1, _out2 in zip(initial, out):
+                    state_t.append( torch.stack((_out1, _out2),0) )
+                state_t = tuple(state_t)
+            elif self.solver in ['dopri5']:
+                initial = (z, _logpz) + reg_states
+                out = odesolve_aca(self.odefunc, initial, options=options)
                 state_t = []
                 for _out1, _out2 in zip(initial, out):
                     state_t.append( torch.stack((_out1, _out2),0) )
@@ -88,6 +97,13 @@ class CNF(nn.Module):
             if self.test_solver in ['sym12async', 'adalf', 'fixedstep_sym12async','fixedstep_adalf']:
                 initial = (z, _logpz) + reg_states
                 out = odesolve(self.odefunc, initial, options=options)
+                state_t = []
+                for _out1, _out2 in zip(initial, out):
+                    state_t.append(torch.stack((_out1, _out2)))
+                state_t = tuple(state_t)
+            elif self.solver in ['dopri5']:
+                initial = (z, _logpz) + reg_states
+                out = odesolve_aca(self.odefunc, initial, options=options)
                 state_t = []
                 for _out1, _out2 in zip(initial, out):
                     state_t.append(torch.stack((_out1, _out2)))

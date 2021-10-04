@@ -100,10 +100,10 @@ def count_total_time(model):
 
 
 REGULARIZATION_FNS = {
-    "kinetic_energy": reg_lib.quadratic_cost,
-    "jacobian_norm2": reg_lib.jacobian_frobenius_regularization_fn,
-    "total_deriv": reg_lib.total_derivative,
-    "directional_penalty": reg_lib.directional_derivative
+    # "kinetic_energy": reg_lib.quadratic_cost,
+    # "jacobian_norm2": reg_lib.jacobian_frobenius_regularization_fn,
+    # "total_deriv": reg_lib.total_derivative,
+    # "directional_penalty": reg_lib.directional_derivative
 }
 
 INV_REGULARIZATION_FNS = {v: k for k, v in six.iteritems(REGULARIZATION_FNS)}
@@ -151,5 +151,47 @@ def get_regularization(model, regularization_coeffs):
             acc_reg_states = tuple(acc_reg_states[i] + reg[i] for i in range(len(reg)))
 
     return acc_reg_states
+
+def build_model_tabular(args, dims, regularization_fns=None):
+
+    hidden_dims = tuple(map(int, args.dims.split("-")))
+
+    def build_cnf():
+        diffeq = layers.ODEnet(
+            hidden_dims=hidden_dims,
+            input_shape=(dims,),
+            strides=None,
+            conv=False,
+            layer_type=args.layer_type,
+            nonlinearity=args.nonlinearity,
+        )
+        odefunc = layers.ODEfunc(
+            diffeq=diffeq,
+            divergence_fn=args.divergence_fn,
+            residual=args.residual,
+            rademacher=args.rademacher,
+        )
+        cnf = layers.CNF(
+            odefunc=odefunc,
+            T=args.time_length,
+            train_T=args.train_T,
+            regularization_fns=regularization_fns,
+            solver=args.solver,
+        )
+        return cnf
+
+    chain = [build_cnf() for _ in range(args.num_blocks)]
+    if args.batch_norm:
+        bn_layers = [layers.MovingBatchNorm1d(dims, bn_lag=args.bn_lag) for _ in range(args.num_blocks)]
+        bn_chain = [layers.MovingBatchNorm1d(dims, bn_lag=args.bn_lag)]
+        for a, b in zip(chain, bn_layers):
+            bn_chain.append(a)
+            bn_chain.append(b)
+        chain = bn_chain
+    model = layers.SequentialFlow(chain)
+
+    set_cnf_options(args, model)
+
+    return model
 
 
