@@ -16,15 +16,17 @@ import math
 import sys
 import os
 import shutil
-from TorchDiffEqPack.odesolver_mem import odesolve_adjoint_sym12  as odesolve
+#from TorchDiffEqPack.odesolver_mem import odesolve_adjoint_sym12  as odesolve
+#from TorchDiffEqPack.odesolver import odesolve
+from TorchDiffEqPack import odesolve_adjoint as odesolve
 
 # from torch_ode_cifar import odesolve
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 def lr_schedule(lr, epoch):
     optim_factor = 0
-    if epoch > 60:
+    if epoch > 250:
         optim_factor = 2
-    elif epoch > 30:
+    elif epoch > 150:
         optim_factor = 1
 
     return lr / math.pow(10, (optim_factor))
@@ -41,26 +43,28 @@ parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 
 parser.add_argument('--lr', type=float, default=0.1)
-parser.add_argument('--h', type=float, default=None, help='Initial Stepsize')
-parser.add_argument('--t0', type=float, default=1.0, help='Initial time')
-parser.add_argument('--t1', type=float, default=0.0, help='End time')
+#parser.add_argument('--h', type=float, default=None, help='Initial Stepsize')
+parser.add_argument('--Nt', type = int, default = 1) # Number of time steps
+
+parser.add_argument('--t0', type=float, default=0.0, help='Initial time')
+parser.add_argument('--t1', type=float, default=1.0, help='End time')
 parser.add_argument('--rtol', type=float, default=1e-1, help='Releative tolerance')
 parser.add_argument('--atol', type=float, default=1e-2, help='Absolute tolerance')
 parser.add_argument('--print_neval', type=bool, default=False, help='Print number of evaluation or not')
 parser.add_argument('--neval_max', type=int, default=50000, help='Maximum number of evaluation in integration')
 
-parser.add_argument('--batch_size', type=int, default=128)
+parser.add_argument('--batch_size', type=int, default=256)
 args = parser.parse_args()
 if args.network == 'sqnxt':
     from models.sqnxt import SqNxt_23_1x
 
     writer = SummaryWriter(
-        'sqnxt/' + args.network + '_mem_' + args.method + '_lr_' + str(args.lr) + '_h_' + str(args.h) + '/')
+        'sqnxt/' + args.network + '_mem_' + args.method + '_lr_' + str(args.lr) + '_h_' + str(args.Nt) + '/')
 elif args.network == 'resnet':
     from models.resnet import ResNet18
 
     writer = SummaryWriter(
-        'resnet/' + args.network + '_mem_' + args.method + '_lr_' + str(args.lr) + '_h_' + str(args.h) + '/')
+        'resnet/' + args.network + '_mem_' + args.method + '_lr_' + str(args.lr) + '_h_' + str(args.Nt) + '/')
 
 num_epochs = int(args.num_epochs)
 lr = float(args.lr)
@@ -69,7 +73,9 @@ batch_size = int(args.batch_size)
 
 is_use_cuda = torch.cuda.is_available()
 device = torch.device("cuda:0" if is_use_cuda else "cpu")
-
+if is_use_cuda:
+    import nvidia_smi
+    nvidia_smi.nvmlInit()
 
 class ODEBlock(nn.Module):
 
@@ -78,14 +84,15 @@ class ODEBlock(nn.Module):
         self.odefunc = odefunc
         self.options = {}
         self.options.update({'method': args.method})
-        self.options.update({'h': args.h})
+        #self.options.update({'h': args.h})
+        self.options.update({'h': 1./float(args.Nt)})
         self.options.update({'t0': args.t0})
         self.options.update({'t1': args.t1})
         self.options.update({'rtol': args.rtol})
         self.options.update({'atol': args.atol})
         self.options.update({'print_neval': args.print_neval})
         self.options.update({'neval_max': args.neval_max})
-        print(self.options)
+        #print(self.options)
 
     def forward(self, x):
         out = odesolve(self.odefunc, x, self.options)
@@ -125,8 +132,8 @@ transform_test = transforms.Compose([
 
 train_dataset = torchvision.datasets.CIFAR10(root='./data', transform=transform_train, train=True, download=True)
 test_dataset = torchvision.datasets.CIFAR10(root='./data', transform=transform_test, train=False, download=True)
-train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, num_workers=4, shuffle=True)
-test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, num_workers=4, shuffle=False)
+train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, num_workers=0, shuffle=True, drop_last=True)
+test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=128, num_workers=0, shuffle=False, drop_last=True)
 
 if args.network == 'sqnxt':
     net = SqNxt_23_1x(10, ODEBlock)
@@ -134,7 +141,7 @@ elif args.network == 'resnet':
     net = ResNet18(ODEBlock)
 
 net.apply(conv_init)
-print(net)
+#print(net)
 if is_use_cuda:
     net.cuda()  # to(device)
     net = nn.DataParallel(net)
@@ -156,6 +163,9 @@ def train(epoch):
         with torch.autograd.set_detect_anomaly(True):
             outputs = net(inputs)
             loss = criterion(outputs, labels)
+            if is_use_cuda:
+                handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
+                info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
             loss.backward()
 
         optimizer.step()
@@ -166,13 +176,20 @@ def train(epoch):
         correct += predict.eq(labels).cpu().sum().double()
 
         sys.stdout.write('\r')
-        sys.stdout.write('[%s] Training Epoch [%d/%d] Iter[%d/%d]\t\tLoss: %.4f Acc@1: %.3f'
-                         % (time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())),
-                            epoch, num_epochs, idx, len(train_dataset) // batch_size,
-                            train_loss / (batch_size * (idx + 1)), correct / total))
+        if is_use_cuda:
+            sys.stdout.write('[%s] Training Epoch [%d/%d] Iter[%d/%d]\t\tLoss: %.4f Acc@1: %.3f Mem: %.3f GB'
+                             % (time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())),
+                                epoch, num_epochs, idx, len(train_dataset) // batch_size,
+                                train_loss / (batch_size * (idx + 1)), correct / total, info.used/1e9))
+        else:
+            sys.stdout.write('[%s] Training Epoch [%d/%d] Iter[%d/%d]\t\tLoss: %.4f Acc@1: %.3f'
+                             % (time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())),
+                                epoch, num_epochs, idx, len(train_dataset) // batch_size,
+                                train_loss / (batch_size * (idx + 1)), correct / total))
         sys.stdout.flush()
     writer.add_scalar('Train/Accuracy', correct / total, epoch)
-
+    if is_use_cuda:
+        writer.add_scalar('Memory',info.used/1e9)
 
 def test(epoch):
     net.eval()
@@ -198,7 +215,7 @@ def test(epoch):
         sys.stdout.write('[%s] Testing Epoch [%d/%d] Iter[%d/%d]\t\tLoss: %.4f Acc@1: %.3f'
                          % (time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())),
                             epoch, num_epochs, idx, len(test_dataset) // test_loader.batch_size,
-                            test_loss / (100 * (idx + 1)), correct / total))
+                            test_loss / (test_loader.batch_size * (idx + 1)), correct / total))
         sys.stdout.flush()
 
     acc = correct / total
@@ -258,5 +275,5 @@ for _epoch in range(start_epoch, start_epoch + num_epochs):
         'optimizer': optimizer.state_dict(),
     }, is_best, checkpoint=args.checkpoint + '_' + args.method + '_' + args.network)
 
-print('Best Acc@1: %.4f' % (best_acc * 100))
+print('Best Acc@1: %.4f' % (best_acc * test_loader.batch_size))
 writer.close()

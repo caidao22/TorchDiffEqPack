@@ -97,7 +97,7 @@ class SqueezeNext(nn.Module):
         
     # with residual connection mismatch
     def _make_layer1(self, num_block, width_x, out_channels, stride):
-        print("in_channels = ", self.in_channels)
+        #print("in_channels = ", self.in_channels)
         strides = [stride] + [1] * (num_block - 1)
         layers  = []
         for _stride in strides:
@@ -106,7 +106,7 @@ class SqueezeNext(nn.Module):
         return nn.Sequential(*layers)
     
     def _make_layer2(self, num_block, width_x, out_channels, stride):
-        print("in_channels = ", self.in_channels)
+        #print("in_channels = ", self.in_channels)
         strides = [stride] + [1] * (num_block - 1)
         layers  = []
         for _stride in strides:
