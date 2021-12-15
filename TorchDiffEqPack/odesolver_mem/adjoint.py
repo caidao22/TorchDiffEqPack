@@ -8,6 +8,8 @@ from ..odesolver.base import check_arguments
 reload_state = False
 __all__ = ['odesolve_adjoint']
 
+is_use_cuda = torch.cuda.is_available()
+
 def flatten_params(params):
     flat_params = [p.contiguous().view(-1) for p in params]
     return torch.cat(flat_params) if len(flat_params) > 0 else torch.tensor([])
@@ -48,7 +50,8 @@ class Checkpointing_Adjoint(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, *grad_output):
-
+        # import pdb; pdb.set_trace()
+        mem_checked = False
         z0, options, func, steps, state0 = ctx.z0, ctx.options, ctx.func, ctx.steps, ctx.state0
         f_params = tuple( flatten(func.parameters()) )
 
@@ -75,7 +78,7 @@ class Checkpointing_Adjoint(torch.autograd.Function):
                 y_current, error, variables = solver.step(solver.func, t_current, point - t_current, y_current, return_variables=True)
                 t_current = point
                 inputs.append(tuple( [Variable(_y.data, requires_grad=True) for _y in y_current]) )
-                delete_local_computation_graph( flatten(list(error) + list(variables)) )
+                # delete_local_computation_graph( flatten(list(error) + list(variables)) )
 
         # compute gradient w.r.t t1
         func_i = solver.func(solver.t1, y_current)
@@ -86,7 +89,7 @@ class Checkpointing_Adjoint(torch.autograd.Function):
 
         ###################################
         # note that steps does not include the start point, need to include it
-        steps = [options['t0']] + steps
+        steps = [options['t0']] + list(steps)
         # now two list corresponds, steps = [t0, teval1, teval2, ... tevaln, t1]
         #                           inputs = [z0, z1, z2, ... , z_out]
         ###################################
@@ -124,7 +127,11 @@ class Checkpointing_Adjoint(torch.autograd.Function):
             with torch.enable_grad():
                 point.requires_grad = True
                 y, error, variables = solver.step(solver.func, point, point2 - point, input, return_variables=True)
-
+                if is_use_cuda and not mem_checked:
+                    import nvidia_smi
+                    handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
+                    info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+                    print('gpu mem: %.3f GB' % (info.used/1e9))
                 _grad_t, *_grad_intput_and_param = torch.autograd.grad(
                     y, (point,) + input + f_params,
                     grad_output, allow_unused=True)
