@@ -5,6 +5,8 @@ from torch.autograd import Variable
 import copy
 from ..misc import delete_local_computation_graph, flatten
 from ..odesolver.base import check_arguments
+from . import gpu_mem
+
 reload_state = False
 __all__ = ['odesolve_adjoint']
 
@@ -51,7 +53,7 @@ class Checkpointing_Adjoint(torch.autograd.Function):
     @staticmethod
     def backward(ctx, *grad_output):
         # import pdb; pdb.set_trace()
-        mem_checked = False
+        mem_recorded = False
         z0, options, func, steps, state0 = ctx.z0, ctx.options, ctx.func, ctx.steps, ctx.state0
         f_params = tuple( flatten(func.parameters()) )
 
@@ -119,6 +121,11 @@ class Checkpointing_Adjoint(torch.autograd.Function):
         grad_y = tuple( torch.zeros_like(_z0) for _z0 in z)
         grad_flat_param = torch.zeros_like(flat_params)
 
+        if gpu_mem.monitor_gpu_mem and is_use_cuda and not mem_recorded:
+            import nvidia_smi
+            handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
+            info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+            gpu_mem_before_ad = info.used/1e9
 
         for input, point, point2 in zip(inputs, steps, steps2): # step in reverse-time
             if torch.is_tensor(point) and torch.is_tensor(point2):
@@ -127,14 +134,17 @@ class Checkpointing_Adjoint(torch.autograd.Function):
             with torch.enable_grad():
                 point.requires_grad = True
                 y, error, variables = solver.step(solver.func, point, point2 - point, input, return_variables=True)
-                if is_use_cuda and not mem_checked:
-                    import nvidia_smi
-                    handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
-                    info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
-                    print('gpu mem: %.3f GB' % (info.used/1e9))
                 _grad_t, *_grad_intput_and_param = torch.autograd.grad(
                     y, (point,) + input + f_params,
                     grad_output, allow_unused=True)
+                if gpu_mem.monitor_gpu_mem and is_use_cuda and not mem_recorded:
+                    handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
+                    info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+                    gpu_mem_after_ad = info.used/1e9
+                    # if gpu_mem_after_ad > gpu_mem.gpu_mem_peak:
+                    #    gpu_mem.gpu_mem_peak = gpu_mem_after_ad 
+                    gpu_mem.gpu_mem_graph = gpu_mem.gpu_mem_graph + gpu_mem_after_ad - gpu_mem_before_ad
+                    mem_recorded = True
 
                 delete_local_computation_graph(  flatten( [y, error] + list(variables)) )
 
