@@ -16,7 +16,8 @@ import math
 import sys
 import os
 import shutil
-from DiffEqPack import odesolve_endtime as odesolve
+#from DiffEqPack import odesolve_endtime as odesolve
+from TorchDiffEqPack import odesolve_adjoint as odesolve
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
@@ -40,7 +41,8 @@ parser.add_argument('--start_epoch', type=int, default=0)
 # Checkpoints
 parser.add_argument('-c', '--checkpoint', default='./checkpoint', type=str, metavar='PATH',
                     help='path to save checkpoint (default: checkpoint)')
-parser.add_argument('--resume', default='./checkpoint_mem_Sym12Async_resnet_12/model_best.pth.tar', type=str, metavar='PATH',
+#parser.add_argument('--resume', default='./checkpoint_mem_Sym12Async_resnet_12/model_best.pth.tar', type=str, metavar='PATH',
+parser.add_argument('--resume', default=None, type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 
 parser.add_argument('--lr', type=float, default=0.1)

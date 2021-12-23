@@ -16,9 +16,6 @@ import math
 import sys
 import os
 import shutil
-#from TorchDiffEqPack.odesolver_mem import odesolve_adjoint_sym12  as odesolve
-#from TorchDiffEqPack.odesolver import odesolve
-from TorchDiffEqPack import odesolve_adjoint as odesolve
 
 # from torch_ode_cifar import odesolve
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
@@ -76,6 +73,11 @@ device = torch.device("cuda:0" if is_use_cuda else "cpu")
 if is_use_cuda:
     import nvidia_smi
     nvidia_smi.nvmlInit()
+from TorchDiffEqPack.odesolver_mem import gpu_mem as odem
+
+#from TorchDiffEqPack.odesolver_mem import odesolve_adjoint_sym12  as odesolve
+#from TorchDiffEqPack.odesolver import odesolve
+from TorchDiffEqPack import odesolve_adjoint as odesolve
 
 class ODEBlock(nn.Module):
 
@@ -144,7 +146,7 @@ net.apply(conv_init)
 #print(net)
 if is_use_cuda:
     net.cuda()  # to(device)
-    net = nn.DataParallel(net)
+    #net = nn.DataParallel(net)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
 
@@ -155,6 +157,8 @@ def train(epoch):
     correct = 0
     total = 0
 
+    if is_use_cuda:
+        odem.monitor_gpu_mem = True
     print('Training Epoch: #%d, LR: %.4f' % (epoch, lr_schedule(lr, epoch)))
     for idx, (inputs, labels) in enumerate(train_loader):
         if is_use_cuda:
@@ -174,13 +178,14 @@ def train(epoch):
         _, predict = torch.max(outputs, 1)
         total += labels.size(0)
         correct += predict.eq(labels).cpu().sum().double()
-
         sys.stdout.write('\r')
         if is_use_cuda:
-            sys.stdout.write('[%s] Training Epoch [%d/%d] Iter[%d/%d]\t\tLoss: %.4f Acc@1: %.3f Mem: %.3f GB'
+            sys.stdout.write('[%s] Training Epoch [%d/%d] Iter[%d/%d]\t\tLoss: %.4f Acc@1: %.3f Mem: %.3f PMem: %.3f GMem: %.3f'
                              % (time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())),
                                 epoch, num_epochs, idx, len(train_dataset) // batch_size,
-                                train_loss / (batch_size * (idx + 1)), correct / total, info.used/1e9))
+                                train_loss / (batch_size * (idx + 1)), correct / total, info.used/1e9,
+                                odem.gpu_mem_peak, odem.gpu_mem_graph
+                               ))
         else:
             sys.stdout.write('[%s] Training Epoch [%d/%d] Iter[%d/%d]\t\tLoss: %.4f Acc@1: %.3f'
                              % (time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())),
