@@ -302,7 +302,7 @@ if __name__ == '__main__':
     logger.info('Evaluating model on test set.')
     model.eval()
 
-    override_divergence_fn(model, "brute_force")
+    #override_divergence_fn(model, "brute_force")
 
     with torch.no_grad():
         test_loss = utils.AverageMeter()

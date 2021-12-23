@@ -11,7 +11,7 @@ ATOL=0.001
 SAVE=../experiments/$DATA/example_Lambda1.0_$KE$JF$SOLVER$STEPSIZE$RTOL$ATOL
 LR=0.001
 
-NUM_GPUS=2
+NUM_GPUS=1
 
 OMP_NUM_THREADS=5 \
 python -m torch.distributed.launch \
